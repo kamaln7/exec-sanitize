@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -25,7 +26,7 @@ func main() {
 	)
 	flag.Var(&patterns, "pattern", "regexp pattern to sanitize. can be set multiple times")
 	flag.Var(&plainPatterns, "plain-pattern", "plaintext pattern to sanitize. can be set multiple times")
-	flag.Var(&replacements, "replacement", "what to replace matched substrings with. if unset, matches are deleted. if set once, all matches are replaced with the set replacement. if set more than once, there must be a replacement corresponding to each provided pattern (regexp first, then plaintext)")
+	flag.Var(&replacements, "replacement", "what to replace matched substrings with. if unset, matches are deleted. if set once, all matches are replaced with the set replacement. if set more than once, there must be a replacement corresponding to each provided pattern (plain patterns first, then regex patterns)")
 	flag.Parse()
 
 	if len(os.Args) < 2 {
@@ -34,38 +35,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(replacements) > 1 && len(replacements) != (len(patterns)+len(plainPatterns)) {
-		log.Printf("error: mismatched number of replacements\n")
-		flag.PrintDefaults()
+	s, err := NewSanitizer(patterns, plainPatterns, replacements)
+	if err != nil {
+		log.Printf("%v\n", err)
 		os.Exit(1)
-	}
-
-	regexes := make([]*regexp.Regexp, 0, len(patterns))
-	for _, p := range patterns {
-		regex, err := regexp.Compile(p)
-		if err != nil {
-			log.Printf("error parsing pattern %q: %v\n", p, err)
-			os.Exit(1)
-		}
-		regexes = append(regexes, regex)
-	}
-	for _, s := range plainPatterns {
-		p := regexp.QuoteMeta(s)
-		regex, err := regexp.Compile(p)
-		if err != nil {
-			log.Printf("error parsing pattern %q: %v\n", p, err)
-			os.Exit(1)
-		}
-		regexes = append(regexes, regex)
-	}
-
-	replacementsBytes := make([][]byte, len(replacements))
-	for i, r := range replacements {
-		replacementsBytes[i] = []byte(r)
-	}
-	s := &sanitizer{
-		patterns:     regexes,
-		replacements: replacementsBytes,
 	}
 
 	args := flag.Args()
@@ -89,7 +62,7 @@ func main() {
 		}
 	}()
 
-	err := c.Run()
+	err = c.Run()
 	if err != nil {
 		log.Printf("%v\n", err)
 		os.Exit(1)
@@ -108,6 +81,44 @@ func main() {
 
 	cancel()
 	os.Exit(exitCode)
+}
+
+func NewSanitizer(patterns, plainPatterns, replacements []string) (*sanitizer, error) {
+	if len(replacements) > 1 && len(replacements) != (len(patterns)+len(plainPatterns)) {
+		return nil, fmt.Errorf("error: mismatched number of replacements")
+	}
+
+	var replacementsBytes [][]byte
+	if len(replacements) == 1 {
+		replacementsBytes = [][]byte{[]byte(replacements[0])}
+	} else if len(replacements) > 1 {
+		replacementsBytes = make([][]byte, 0, len(replacements))
+		for _, r := range replacements {
+			replacementsBytes = append(replacementsBytes, []byte(r))
+		}
+	}
+
+	regexes := make([]*regexp.Regexp, 0, len(patterns)+len(plainPatterns))
+	for _, s := range plainPatterns {
+		p := regexp.QuoteMeta(s)
+		regex, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing pattern %q: %v\n", p, err)
+		}
+		regexes = append(regexes, regex)
+	}
+	for _, p := range patterns {
+		regex, err := regexp.Compile(p)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing pattern %q: %v\n", p, err)
+		}
+		regexes = append(regexes, regex)
+	}
+
+	return &sanitizer{
+		patterns:     regexes,
+		replacements: replacementsBytes,
+	}, nil
 }
 
 type stringSlice []string
