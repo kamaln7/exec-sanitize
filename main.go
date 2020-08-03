@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -13,6 +14,13 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+)
+
+var (
+	// discardToken is a special replacement string that discards the write operation completely on match
+	discardToken = []byte("@discard")
+	// discardTokenEscaped is the escaped version of the discardToken)
+	discardTokenEscaped = []byte("@@discard")
 )
 
 func main() {
@@ -152,6 +160,12 @@ func (s *sanitizer) Sanitize(in []byte) []byte {
 	for i, p := range s.patterns {
 		if llen > 1 {
 			replacement = s.replacements[i]
+		}
+
+		if bytes.Equal(replacement, discardToken) {
+			return []byte{}
+		} else if bytes.Equal(replacement, discardTokenEscaped) {
+			replacement = discardToken
 		}
 
 		in = p.ReplaceAllLiteral(in, replacement)

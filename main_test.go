@@ -55,6 +55,26 @@ func TestSanitizer(t *testing.T) {
 				[]string{"ac", "a+c"},
 			)),
 		},
+		{
+			in:  "secret",
+			out: "",
+			sanitizer: &sanitizer{
+				patterns: []*regexp.Regexp{
+					regexp.MustCompile("secret"),
+				},
+			},
+			replacements: []string{"@discard"},
+		},
+		{
+			in:  "some secret",
+			out: "some @discard",
+			sanitizer: &sanitizer{
+				patterns: []*regexp.Regexp{
+					regexp.MustCompile("secret"),
+				},
+			},
+			replacements: []string{"@@discard"},
+		},
 	}
 
 	for _, tc := range tcs {
