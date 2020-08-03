@@ -60,7 +60,17 @@ func TestSanitizer(t *testing.T) {
 			out: "",
 			sanitizer: &sanitizer{
 				patterns: []*regexp.Regexp{
-					regexp.MustCompile("secret"),
+					regexp.MustCompile("^secret$"),
+				},
+			},
+			replacements: []string{"@discard"},
+		},
+		{
+			in:  "not a secret",
+			out: "not a secret",
+			sanitizer: &sanitizer{
+				patterns: []*regexp.Regexp{
+					regexp.MustCompile("^secret$"),
 				},
 			},
 			replacements: []string{"@discard"},

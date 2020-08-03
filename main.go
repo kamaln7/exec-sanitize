@@ -162,7 +162,7 @@ func (s *sanitizer) Sanitize(in []byte) []byte {
 			replacement = s.replacements[i]
 		}
 
-		if bytes.Equal(replacement, discardToken) {
+		if bytes.Equal(replacement, discardToken) && p.Match(in) {
 			return []byte{}
 		} else if bytes.Equal(replacement, discardTokenEscaped) {
 			replacement = discardToken
