@@ -1,4 +1,4 @@
-package main
+package execsanitize
 
 import (
 	"bytes"
@@ -12,22 +12,22 @@ import (
 func TestSanitizer(t *testing.T) {
 	tcs := []struct {
 		name         string
-		sanitizer    *sanitizer
+		sanitizer    *Sanitizer
 		in, out      string
 		replacements []string
 	}{
 		{
 			in:  "hello delete there",
 			out: "hello  there",
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{regexp.MustCompile("delete")},
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{regexp.MustCompile("delete")},
 			},
 		},
 		{
 			in:  "hello there",
 			out: "hmm hmm",
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{
 					regexp.MustCompile("hello"),
 					regexp.MustCompile("there"),
 				},
@@ -37,8 +37,8 @@ func TestSanitizer(t *testing.T) {
 		{
 			in:  "hello there",
 			out: "ya yeet",
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{
 					regexp.MustCompile("hello"),
 					regexp.MustCompile("there"),
 				},
@@ -49,7 +49,7 @@ func TestSanitizer(t *testing.T) {
 			name: "plaintext first regex second",
 			in:   "abbc abbbbc abc abbbbbbc",
 			out:  "ac a+c a+c a+c",
-			sanitizer: must(NewSanitizer(
+			sanitizer: must(New(
 				[]string{"ab+c"},
 				[]string{"abbc"},
 				[]string{"ac", "a+c"},
@@ -58,8 +58,8 @@ func TestSanitizer(t *testing.T) {
 		{
 			in:  "secret",
 			out: "",
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{
 					regexp.MustCompile("^secret$"),
 				},
 			},
@@ -68,8 +68,8 @@ func TestSanitizer(t *testing.T) {
 		{
 			in:  "not a secret",
 			out: "not a secret",
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{
 					regexp.MustCompile("^secret$"),
 				},
 			},
@@ -78,8 +78,8 @@ func TestSanitizer(t *testing.T) {
 		{
 			in:  "some secret",
 			out: "some @discard",
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{
 					regexp.MustCompile("secret"),
 				},
 			},
@@ -89,9 +89,9 @@ func TestSanitizer(t *testing.T) {
 
 	for _, tc := range tcs {
 		if tc.replacements != nil {
-			tc.sanitizer.replacements = make([][]byte, 0, len(tc.replacements))
+			tc.sanitizer.Replacements = make([][]byte, 0, len(tc.replacements))
 			for _, r := range tc.replacements {
-				tc.sanitizer.replacements = append(tc.sanitizer.replacements, []byte(r))
+				tc.sanitizer.Replacements = append(tc.sanitizer.Replacements, []byte(r))
 			}
 		}
 	}
@@ -124,14 +124,14 @@ func TestNewSanitizer(t *testing.T) {
 		patterns         []string
 		plainPatterns    []string
 		replacements     []string
-		sanitizer        *sanitizer
+		sanitizer        *Sanitizer
 		wantErr          bool
 		fillReplacements bool
 	}{
 		{
 			patterns: []string{"del?ete$"},
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{regexp.MustCompile("del?ete$")},
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{regexp.MustCompile("del?ete$")},
 			},
 		},
 		{
@@ -143,8 +143,8 @@ func TestNewSanitizer(t *testing.T) {
 			patterns:      []string{"del?ete$"},
 			plainPatterns: []string{"hmm? ok"},
 			replacements:  []string{"", "sure"},
-			sanitizer: &sanitizer{
-				patterns: []*regexp.Regexp{
+			sanitizer: &Sanitizer{
+				Patterns: []*regexp.Regexp{
 					regexp.MustCompile("hmm\\? ok"),
 					regexp.MustCompile("del?ete$"),
 				},
@@ -155,7 +155,7 @@ func TestNewSanitizer(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			sanitizer, err := NewSanitizer(tc.patterns, tc.plainPatterns, tc.replacements)
+			sanitizer, err := New(tc.patterns, tc.plainPatterns, tc.replacements)
 			if tc.wantErr {
 				require.Error(t, err)
 			} else {
@@ -163,9 +163,9 @@ func TestNewSanitizer(t *testing.T) {
 			}
 
 			if tc.fillReplacements {
-				tc.sanitizer.replacements = make([][]byte, 0, len(tc.replacements))
+				tc.sanitizer.Replacements = make([][]byte, 0, len(tc.replacements))
 				for _, r := range tc.replacements {
-					tc.sanitizer.replacements = append(tc.sanitizer.replacements, []byte(r))
+					tc.sanitizer.Replacements = append(tc.sanitizer.Replacements, []byte(r))
 				}
 			}
 
@@ -174,7 +174,7 @@ func TestNewSanitizer(t *testing.T) {
 	}
 }
 
-func must(s *sanitizer, err error) *sanitizer {
+func must(s *Sanitizer, err error) *Sanitizer {
 	if err != nil {
 		panic(err)
 	}
