@@ -2,6 +2,7 @@ package execsanitize
 
 import (
 	"bytes"
+	"fmt"
 	"regexp"
 	"testing"
 
@@ -11,166 +12,139 @@ import (
 
 func TestSanitizer(t *testing.T) {
 	tcs := []struct {
-		name         string
-		sanitizer    *Sanitizer
-		in, out      string
-		replacements []string
+		name      string
+		sanitizer *Sanitizer
+		tests     [][]string
 	}{
 		{
-			in:  "hello delete there",
-			out: "hello  there",
+			name: "simple",
+			tests: [][]string{
+				{"hello delete there", "hello - there"},
+				{"hello delete delete there", "hello - - there"},
+				{"whole line", "this line was -d"},
+			},
 			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{regexp.MustCompile("delete")},
+				Rules: makeRules(
+					regexp.MustCompile(`^whole line$`), "this line was deleted",
+					"delete", "-",
+				),
 			},
 		},
 		{
-			in:  "hello there",
-			out: "hmm hmm",
-			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{
-					regexp.MustCompile("hello"),
-					regexp.MustCompile("there"),
-				},
+			name: "simple reversed",
+			tests: [][]string{
+				{"hello delete there", "hello - there"},
+				{"hello delete delete there", "hello - - there"},
+				{"whole line", "this line was deleted"},
 			},
-			replacements: []string{"hmm"},
-		},
-		{
-			in:  "hello there",
-			out: "ya yeet",
 			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{
-					regexp.MustCompile("hello"),
-					regexp.MustCompile("there"),
-				},
-			},
-			replacements: []string{"ya", "yeet"},
-		},
-		{
-			name: "plaintext first regex second",
-			in:   "abbc abbbbc abc abbbbbbc",
-			out:  "ac a+c a+c a+c",
-			sanitizer: must(New(
-				[]string{"ab+c"},
-				[]string{"abbc"},
-				[]string{"ac", "a+c"},
-			)),
-		},
-		{
-			in:  "secret",
-			out: "",
-			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{
-					regexp.MustCompile("^secret$"),
-				},
-			},
-			replacements: []string{"@discard"},
-		},
-		{
-			in:  "not a secret",
-			out: "not a secret",
-			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{
-					regexp.MustCompile("^secret$"),
-				},
-			},
-			replacements: []string{"@discard"},
-		},
-		{
-			in:  "some secret",
-			out: "some @discard",
-			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{
-					regexp.MustCompile("secret"),
-				},
-			},
-			replacements: []string{"@@discard"},
-		},
-	}
-
-	for _, tc := range tcs {
-		if tc.replacements != nil {
-			tc.sanitizer.Replacements = make([][]byte, 0, len(tc.replacements))
-			for _, r := range tc.replacements {
-				tc.sanitizer.Replacements = append(tc.sanitizer.Replacements, []byte(r))
-			}
-		}
-	}
-
-	t.Run("sanitize", func(t *testing.T) {
-		for _, tc := range tcs {
-			t.Run(tc.name, func(t *testing.T) {
-				out := tc.sanitizer.Sanitize([]byte(tc.in))
-				assert.Equal(t, tc.out, string(out))
-			})
-		}
-	})
-
-	t.Run("writer", func(t *testing.T) {
-		for _, tc := range tcs {
-			t.Run(tc.name, func(t *testing.T) {
-				var buf bytes.Buffer
-				w := tc.sanitizer.Writer(&buf)
-				_, err := w.Write([]byte(tc.in))
-				require.NoError(t, err)
-				assert.Equal(t, tc.out, buf.String())
-			})
-		}
-	})
-}
-
-func TestNewSanitizer(t *testing.T) {
-	tcs := []struct {
-		name             string
-		patterns         []string
-		plainPatterns    []string
-		replacements     []string
-		sanitizer        *Sanitizer
-		wantErr          bool
-		fillReplacements bool
-	}{
-		{
-			patterns: []string{"del?ete$"},
-			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{regexp.MustCompile("del?ete$")},
+				Rules: makeRules(
+					"delete", "-",
+					regexp.MustCompile(`^whole line$`), "this line was deleted",
+				),
 			},
 		},
 		{
-			patterns:     []string{"del?ete$"},
-			replacements: []string{"", ""},
-			wantErr:      true,
+			name: "capture groups",
+			tests: [][]string{
+				{"a b c hello! d e hey f.", "a b c In this house we say 'ello and not hello! d e In this house we say 'ello and not hey f."},
+			},
+			sanitizer: &Sanitizer{
+				Rules: makeRules(
+					regexp.MustCompile(`he(y|llo)`), func(s string) string {
+						return fmt.Sprintf("In this house we say 'ello and not %s", s)
+					},
+				),
+			},
 		},
 		{
-			patterns:      []string{"del?ete$"},
-			plainPatterns: []string{"hmm? ok"},
-			replacements:  []string{"", "sure"},
-			sanitizer: &Sanitizer{
-				Patterns: []*regexp.Regexp{
-					regexp.MustCompile("hmm\\? ok"),
-					regexp.MustCompile("del?ete$"),
-				},
+			name: "vowel counter",
+			tests: [][]string{
+				{"hello there", "h<1:e>ll<2:o> th<3:e>r<4:e>"},
+				{"the counter should keep going", "th<5:e> c<6:o><7:u>nt<8:e>r sh<9:o><10:u>ld k<11:e><12:e>p g<13:o><14:i>ng"},
 			},
-			fillReplacements: true,
+			sanitizer: &Sanitizer{
+				Rules: makeRules(
+					regexp.MustCompile(`[aieou]`), counterReplacer(),
+				),
+			},
 		},
 	}
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			sanitizer, err := New(tc.patterns, tc.plainPatterns, tc.replacements)
-			if tc.wantErr {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
+			for _, c := range tc.tests {
+				in, want := c[0], c[1]
+				got := tc.sanitizer.Sanitize(in)
+				assert.Equal(t, want, got)
 			}
-
-			if tc.fillReplacements {
-				tc.sanitizer.Replacements = make([][]byte, 0, len(tc.replacements))
-				for _, r := range tc.replacements {
-					tc.sanitizer.Replacements = append(tc.sanitizer.Replacements, []byte(r))
-				}
-			}
-
-			assert.Equal(t, tc.sanitizer, sanitizer)
 		})
+	}
+}
+
+func TestWriter(t *testing.T) {
+	s := &Sanitizer{
+		Rules: makeRules(
+			regexp.MustCompile(`[Hh](i|e(llo|y))`), "greeting",
+			".", "!",
+		),
+	}
+
+	in := "Hello, hi, hey there."
+	out := s.Sanitize(in)
+	require.Equal(t, out, "greeting, greeting, greeting there!")
+
+	var buf bytes.Buffer
+	_, err := s.Writer(&buf).Write([]byte(in))
+	require.NoError(t, err)
+	assert.Equal(t, out, buf.String())
+}
+
+// makeRules converts each pair of args <pattern, replacer> into a rules map
+func makeRules(args ...interface{}) map[*regexp.Regexp]ReplacerFunc {
+	if len(args)%2 != 0 {
+		panic("makeRules requires an even number of args")
+	}
+
+	rules := make(map[*regexp.Regexp]ReplacerFunc, len(args)/2)
+	for i := 0; i < len(args)-1; i += 2 {
+		var pattern *regexp.Regexp
+		switch p := args[i].(type) {
+		case *regexp.Regexp:
+			pattern = p
+		case regexp.Regexp:
+			pattern = &p
+		case string:
+			pattern = regexp.MustCompile(regexp.QuoteMeta(p))
+		default:
+			panic(fmt.Sprintf("bad pattern type %T", args[i]))
+		}
+
+		var replacer ReplacerFunc
+		switch r := args[i+1].(type) {
+		case ReplacerFunc:
+			replacer = r
+		case func(string) string:
+			replacer = r
+		case string:
+			replacer = func(string) string {
+				return r
+			}
+		default:
+			panic(fmt.Sprintf("bad replacer type %T", args[i]))
+		}
+
+		rules[pattern] = replacer
+	}
+
+	return rules
+}
+
+func counterReplacer() ReplacerFunc {
+	var c int
+	return func(s string) string {
+		c++
+		return fmt.Sprintf("<%d:%s>", c, s)
 	}
 }
 
