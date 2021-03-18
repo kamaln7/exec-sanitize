@@ -15,7 +15,12 @@ type ReplacerFunc func(string) string
 
 // Sanitizer sanitizes strings according to regex matching rules
 type Sanitizer struct {
-	Rules map[*regexp.Regexp]ReplacerFunc
+	Rules []*Rule
+}
+
+type Rule struct {
+	Pattern  *regexp.Regexp
+	Replacer ReplacerFunc
 }
 
 // Sanitize sanitizes a string using the Sanitizers rules
@@ -32,12 +37,12 @@ func (s *Sanitizer) Sanitize(in string) string {
 		}
 	}
 
-	for pattern, replacer := range s.Rules {
+	for _, rule := range s.Rules {
 		if discard {
 			break
 		}
 
-		in = pattern.ReplaceAllStringFunc(in, wrapReplacer(replacer))
+		in = rule.Pattern.ReplaceAllStringFunc(in, wrapReplacer(rule.Replacer))
 	}
 
 	if discard {

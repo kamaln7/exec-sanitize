@@ -20,22 +20,18 @@ func Test_parseArgs(t *testing.T) {
 		wantErr    string
 	}{
 		{
-			args: []string{"--"},
-			wantParsed: &parsedArgs{
-				rules: map[string]string{},
-			},
+			args:       []string{"--"},
+			wantParsed: &parsedArgs{},
 		},
 		{
 			args: []string{"--", "true"},
 			wantParsed: &parsedArgs{
-				rules: map[string]string{},
-				cmd:   "true",
+				cmd: "true",
 			},
 		},
 		{
 			args: []string{"--", "echo", "Hi, welcome to Chili's.", "Bye."},
 			wantParsed: &parsedArgs{
-				rules:   map[string]string{},
 				cmd:     "echo",
 				cmdArgs: []string{"Hi, welcome to Chili's.", "Bye."},
 			},
@@ -49,10 +45,19 @@ func Test_parseArgs(t *testing.T) {
 				"--", "echo", "Hi, welcome to Chili's.", "Bye.",
 			},
 			wantParsed: &parsedArgs{
-				rules: map[string]string{
-					"Hi":           "Hello",
-					`\^escape\$`:   "1234",
-					"some pattern": "another",
+				rules: []parsedRule{
+					{
+						pattern:     "Hi",
+						replacement: "Hello",
+					},
+					{
+						pattern:     `\^escape\$`,
+						replacement: "1234",
+					},
+					{
+						pattern:     "some pattern",
+						replacement: "another",
+					},
 				},
 				cmd:     "echo",
 				cmdArgs: []string{"Hi, welcome to Chili's.", "Bye."},
@@ -157,16 +162,17 @@ func Test_main(t *testing.T) {
 				"-p:regex", "(Hi|Bye)", "-r", "<greeting-*>",
 				"-p:plain", "welcome to", "-r", "you have arrived at",
 				"--", "bash", "-c", `
-					IFS=
-					read -r line
-					echo "$line"
-					read -r line
-					echo "$line"
-					read -r line
-					echo "$line"
+					for i in $(seq 1 3); do
+						IFS=$'\n' read -r line
+						echo "$line"
+					done
 				`,
 			},
-			stdin:   &steppedReader{steps: []string{"Hi, welcome to Chili's.\n", "Bye.\n", "Another."}},
+			stdin: &steppedReader{steps: []string{
+				"Hi, welcome to Chili's.\n",
+				"Bye.\n",
+				"Another.",
+			}},
 			withLog: true,
 			expect: func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string) {
 				assert.Empty(t, stderr)
@@ -177,6 +183,34 @@ func Test_main(t *testing.T) {
 					"0": "Hi",
 					"1": "welcome to",
 					"2": "Bye",
+				}, log)
+			},
+		},
+		{
+			args: []string{
+				"-p:regex", "(Hi|Bye)", "-r", "@discard",
+				"--", "bash", "-c", `
+					for i in $(seq 1 3); do
+						IFS=$'\n' read -r line
+						echo "$line"
+						sleep 0.1
+					done
+				`,
+			},
+			stdin: &steppedReader{steps: []string{
+				"Hi, this should be discarded\n",
+				"yeet yeet yeet yeet yeet yeet yeet yeet\n",
+				"this should Bye be discarded\n",
+			}},
+			withLog: true,
+			expect: func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string) {
+				assert.Empty(t, stderr)
+				assert.Zero(t, exitCode)
+				assert.Equal(t, "yeet yeet yeet yeet yeet yeet yeet yeet\n", stdout)
+
+				assert.Equal(t, map[string]string{
+					"0": "Hi",
+					"1": "Bye",
 				}, log)
 			},
 		},

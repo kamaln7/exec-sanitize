@@ -108,16 +108,18 @@ func run(stdin io.Reader, stdout, stderr io.Writer, args []string) int {
 // this is an intermediate step before the replacements are turned into ReplacerFuncs
 // to make things easier to test
 type parsedArgs struct {
-	rules   map[string]string
+	rules   []parsedRule
 	cmd     string
 	cmdArgs []string
 	logPath string
 }
 
+type parsedRule struct {
+	pattern, replacement string
+}
+
 func parseArgs(args []string) (*parsedArgs, error) {
-	parsed := &parsedArgs{
-		rules: map[string]string{},
-	}
+	parsed := &parsedArgs{}
 
 	var (
 		i    int
@@ -155,7 +157,7 @@ func parseArgs(args []string) (*parsedArgs, error) {
 			if rule == "" {
 				return nil, fmt.Errorf("replacement must be directly preceeded by a pattern")
 			}
-			parsed.rules[rule] = value
+			parsed.rules = append(parsed.rules, parsedRule{pattern: rule, replacement: value})
 			rule = ""
 		default:
 			return nil, fmt.Errorf("unrecognized flag %s", arg)
@@ -172,8 +174,8 @@ func parseArgs(args []string) (*parsedArgs, error) {
 	return parsed, nil
 }
 
-func (a *parsedArgs) Rules() (map[*regexp.Regexp]execsanitize.ReplacerFunc, error) {
-	rules := make(map[*regexp.Regexp]execsanitize.ReplacerFunc)
+func (a *parsedArgs) Rules() ([]*execsanitize.Rule, error) {
+	rules := make([]*execsanitize.Rule, 0, len(a.rules))
 
 	var loggerIdx int
 	withLogger := func(r execsanitize.ReplacerFunc) execsanitize.ReplacerFunc {
@@ -194,16 +196,19 @@ func (a *parsedArgs) Rules() (map[*regexp.Regexp]execsanitize.ReplacerFunc, erro
 		}
 	}
 
-	for pattern, replacement := range a.rules {
-		replacement := replacement
+	for _, rule := range a.rules {
+		rule := rule
 
-		rgxp, err := regexp.Compile(pattern)
+		rgxp, err := regexp.Compile(rule.pattern)
 		if err != nil {
-			return nil, fmt.Errorf("parsing pattern %s: %w", pattern, err)
+			return nil, fmt.Errorf("parsing pattern %s: %w", rule.pattern, err)
 		}
 
-		rules[rgxp] = withLogger(func(in string) string {
-			return replacement
+		rules = append(rules, &execsanitize.Rule{
+			Pattern: rgxp,
+			Replacer: withLogger(func(in string) string {
+				return rule.replacement
+			}),
 		})
 	}
 

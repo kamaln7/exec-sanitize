@@ -117,12 +117,12 @@ func TestWriter(t *testing.T) {
 
 // makeRules converts each pair of args <pattern, replacer> into a rules map
 // testing helper
-func makeRules(args ...interface{}) map[*regexp.Regexp]ReplacerFunc {
+func makeRules(args ...interface{}) []*Rule {
 	if len(args)%2 != 0 {
 		panic("makeRules requires an even number of args")
 	}
 
-	rules := make(map[*regexp.Regexp]ReplacerFunc, len(args)/2)
+	rules := make([]*Rule, 0, len(args)/2)
 	for i := 0; i < len(args)-1; i += 2 {
 		var pattern *regexp.Regexp
 		switch p := args[i].(type) {
@@ -150,7 +150,10 @@ func makeRules(args ...interface{}) map[*regexp.Regexp]ReplacerFunc {
 			panic(fmt.Sprintf("bad replacer type %T", args[i]))
 		}
 
-		rules[pattern] = replacer
+		rules = append(rules, &Rule{
+			Pattern:  pattern,
+			Replacer: replacer,
+		})
 	}
 
 	return rules
