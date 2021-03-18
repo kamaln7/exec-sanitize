@@ -165,6 +165,7 @@ func Test_main(t *testing.T) {
 					for i in $(seq 1 3); do
 						IFS=$'\n' read -r line
 						echo "$line"
+						sleep 0.1
 					done
 				`,
 			},
