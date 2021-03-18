@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
-	"log"
+	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -16,128 +17,183 @@ import (
 	"github.com/kamaln7/exec-sanitize/pkg/execsanitize"
 )
 
-var (
-	// discardToken is a special replacement string that discards the write operation completely on match
-	discardToken = []byte("@discard")
-	// discardTokenEscaped is the escaped version of the discardToken)
-	discardTokenEscaped = []byte("@@discard")
-)
-
 func main() {
-	log.SetFlags(0)
+	os.Exit(run(os.Stdin, os.Stdout, os.Stderr, os.Args))
+}
+
+func run(stdin io.Reader, stdout, stderr io.Writer, args []string) int {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	var (
-		patterns      stringSlice
-		plainPatterns stringSlice
-		replacements  stringSlice
-	)
-	flag.Var(&patterns, "pattern", "regexp pattern to sanitize. can be set multiple times")
-	flag.Var(&plainPatterns, "plain-pattern", "plaintext pattern to sanitize. can be set multiple times")
-	flag.Var(&replacements, "replacement", "what to replace matched substrings with. if unset, matches are deleted. if set once, all matches are replaced with the set replacement. if set more than once, there must be a replacement corresponding to each provided pattern (plain patterns first, then regex patterns)")
-	flag.Parse()
+	if len(args) < 2 {
+		fmt.Fprintf(stderr, `usage: exec-sanitize <patterns and replacements> -- <command> [args...]
 
-	if len(os.Args) < 2 {
-		log.Printf("usage: exec-sanitize <command> [args...]\n\n")
-		flag.PrintDefaults()
-		os.Exit(1)
+each pattern must be directly followed with replacement. a replacement value of "@discard" deletes the line entirely.
+
+	-log value
+		optional directory to log substituted strings as numbered files. if set, replacements will have the first asterisk * replaced with the log item number
+	-p:regex value
+		regexp pattern to sanitize.
+	-p:plain value
+		plaintext pattern to sanitize.
+	-r value
+		what to replace matched substrings with.
+`)
+		return 1
 	}
 
-	s, err := New(patterns, plainPatterns, replacements)
+	parsedArgs, err := parseArgs(args[1:])
 	if err != nil {
-		log.Printf("%v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
 	}
 
-	args := flag.Args()
-	c := exec.CommandContext(ctx, args[0], args[1:]...)
+	rules, err := parsedArgs.Rules()
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	s := &execsanitize.Sanitizer{Rules: rules}
+
+	c := exec.CommandContext(ctx, parsedArgs.cmd, parsedArgs.cmdArgs...)
 	c.Env = os.Environ()
-	c.Stdin = os.Stdin
-	c.Stdout = s.Writer(os.Stdout)
-	c.Stderr = s.Writer(os.Stderr)
+	c.Stdin = stdin
+	c.Stdout = s.Writer(stdout)
+	c.Stderr = s.Writer(stderr)
 
 	chanSig := make(chan os.Signal)
 	signal.Notify(chanSig, os.Interrupt, syscall.SIGTERM)
 	go func() {
+	loop:
 		for {
 			select {
 			case sig := <-chanSig:
+				_ = c.Process.Signal(sig)
 				cancel()
-				c.Process.Signal(sig)
 			case <-ctx.Done():
-				break
+				break loop
 			}
 		}
 	}()
 
 	err = c.Run()
 	if err != nil {
-		log.Printf("%v\n", err)
-		os.Exit(1)
+		var (
+			exitCode = 1
+			exerr    *exec.ExitError
+		)
+		if errors.As(err, &exerr) {
+			exitCode = exerr.ExitCode()
+		} else {
+			fmt.Fprintf(stderr, "\ncommand exited with error %v\n", err)
+			return exitCode
+		}
+
+		fmt.Fprintf(stderr, "\ncommand exited with code %d\n", exitCode)
+		return exitCode
 	}
+
+	return 0
+}
+
+// this is an intermediate step before the replacements are turned into ReplacerFuncs
+// to make things easier to test
+type parsedArgs struct {
+	rules   map[string]string
+	cmd     string
+	cmdArgs []string
+	logPath string
+}
+
+func parseArgs(args []string) (*parsedArgs, error) {
+	parsed := &parsedArgs{
+		rules: map[string]string{},
+	}
+
 	var (
-		exitCode = 0
-		exerr    *exec.ExitError
+		i    int
+		rule string
 	)
-	if errors.As(err, &exerr) {
-		exitCode = exerr.ExitCode()
-	}
+	for ; i < len(args); i += 2 {
+		arg := args[i]
+		if arg == "--" {
+			i++
+			break
+		}
 
-	if err != nil {
-		log.Printf("command exited with code %d and error %v\n", exitCode, err)
-	}
+		if i+1 >= len(args) {
+			return nil, fmt.Errorf("unbalanced number of args")
+		}
 
-	cancel()
-	os.Exit(exitCode)
-}
-
-type stringSlice []string
-
-var _ flag.Value = new(stringSlice)
-
-func (ss *stringSlice) String() string {
-	return strings.Join(*ss, ",")
-}
-
-func (ss *stringSlice) Set(value string) error {
-	(*ss) = append(*ss, value)
-	return nil
-}
-
-func New(patterns, plainPatterns, replacements []string) (*execsanitize.Sanitizer, error) {
-	if len(replacements) > 1 && len(replacements) != (len(patterns)+len(plainPatterns)) {
-		return nil, fmt.Errorf("error: mismatched number of replacements")
-	}
-
-	var replacementsBytes [][]byte
-	if len(replacements) == 1 {
-		replacementsBytes = [][]byte{[]byte(replacements[0])}
-	} else if len(replacements) > 1 {
-		replacementsBytes = make([][]byte, 0, len(replacements))
-		for _, r := range replacements {
-			replacementsBytes = append(replacementsBytes, []byte(r))
+		value := args[i+1]
+		switch arg {
+		case "-log":
+			parsed.logPath = value
+		case "-p:regex":
+			if rule != "" {
+				return nil, fmt.Errorf("pattern must be followed with a replacement")
+			}
+			rule = value
+		case "-p:plain":
+			if rule != "" {
+				return nil, fmt.Errorf("pattern must be followed with a replacement")
+			}
+			rule = regexp.QuoteMeta(value)
+		case "-r":
+			if rule == "" {
+				return nil, fmt.Errorf("replacement must be directly preceeded by a pattern")
+			}
+			parsed.rules[rule] = value
+			rule = ""
+		default:
+			return nil, fmt.Errorf("unrecognized flag %s", arg)
 		}
 	}
 
-	regexes := make([]*regexp.Regexp, 0, len(patterns)+len(plainPatterns))
-	for _, s := range plainPatterns {
-		p := regexp.QuoteMeta(s)
-		regex, err := regexp.Compile(p)
+	if i < len(args) {
+		parsed.cmd = args[i]
+	}
+	if i+1 < len(args) {
+		parsed.cmdArgs = args[i+1:]
+	}
+
+	return parsed, nil
+}
+
+func (a *parsedArgs) Rules() (map[*regexp.Regexp]execsanitize.ReplacerFunc, error) {
+	rules := make(map[*regexp.Regexp]execsanitize.ReplacerFunc)
+
+	var loggerIdx int
+	withLogger := func(r execsanitize.ReplacerFunc) execsanitize.ReplacerFunc {
+		if a.logPath == "" {
+			return r
+		}
+
+		return func(in string) string {
+			s := r(in)
+
+			idx := loggerIdx
+			loggerIdx++
+
+			_ = ioutil.WriteFile(filepath.Join(a.logPath, fmt.Sprint(idx)), []byte(in), 0644)
+
+			s = strings.Replace(s, "*", fmt.Sprint(idx), 1)
+			return s
+		}
+	}
+
+	for pattern, replacement := range a.rules {
+		replacement := replacement
+		
+		rgxp, err := regexp.Compile(pattern)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing pattern %q: %v\n", p, err)
+			return nil, fmt.Errorf("parsing pattern %s: %w", pattern, err)
 		}
-		regexes = append(regexes, regex)
-	}
-	for _, p := range patterns {
-		regex, err := regexp.Compile(p)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing pattern %q: %v\n", p, err)
-		}
-		regexes = append(regexes, regex)
+
+		rules[rgxp] = withLogger(func(in string) string {
+			return replacement
+		})
 	}
 
-	return &execsanitize.Sanitizer{
-		Patterns:     regexes,
-		Replacements: replacementsBytes,
-	}, nil
+	return rules, nil
 }
