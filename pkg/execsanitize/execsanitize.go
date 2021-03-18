@@ -5,7 +5,12 @@ import (
 	"regexp"
 )
 
-// ReplacerFunc is a function that accept a pattern and its matches, and returns what it should be replaced with
+const (
+	// DiscardToken is a special replacement string that discards the write operation completely on match
+	DiscardToken = "@discard"
+)
+
+// ReplacerFunc is a function that accept a match and returns its replacement
 type ReplacerFunc func(string) string
 
 // Sanitizer sanitizes strings according to regex matching rules
@@ -15,8 +20,28 @@ type Sanitizer struct {
 
 // Sanitize sanitizes a string using the Sanitizers rules
 func (s *Sanitizer) Sanitize(in string) string {
+	var discard bool
+	wrapReplacer := func(r ReplacerFunc) ReplacerFunc {
+		return func(in string) string {
+			s := r(in)
+			if s == DiscardToken {
+				discard = true
+			}
+
+			return s
+		}
+	}
+
 	for pattern, replacer := range s.Rules {
-		in = pattern.ReplaceAllStringFunc(in, replacer)
+		if discard {
+			break
+		}
+
+		in = pattern.ReplaceAllStringFunc(in, wrapReplacer(replacer))
+	}
+
+	if discard {
+		return ""
 	}
 
 	return in

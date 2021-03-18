@@ -69,6 +69,21 @@ func TestSanitizer(t *testing.T) {
 				),
 			},
 		},
+		{
+			name: "discard",
+			tests: [][]string{
+				{"hello secret there", ""},
+				{"secret", ""},
+				{"hi it's a secret message", ""},
+				{"hi it's a public message", "hello it's a public message"},
+			},
+			sanitizer: &Sanitizer{
+				Rules: makeRules(
+					"hi", "hello",
+					"secret", DiscardToken,
+				),
+			},
+		},
 	}
 
 	for _, tc := range tcs {
@@ -101,6 +116,7 @@ func TestWriter(t *testing.T) {
 }
 
 // makeRules converts each pair of args <pattern, replacer> into a rules map
+// testing helper
 func makeRules(args ...interface{}) map[*regexp.Regexp]ReplacerFunc {
 	if len(args)%2 != 0 {
 		panic("makeRules requires an even number of args")
