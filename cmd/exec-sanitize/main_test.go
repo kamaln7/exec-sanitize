@@ -111,59 +111,84 @@ func Test_main(t *testing.T) {
 	tcs := []struct {
 		name    string
 		args    []string
-		stdin   string
+		stdin   io.Reader
 		withLog bool
-		expect  func(t *testing.T, stdout, stderr string, exitCode int, log []string)
+		expect  func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string)
 	}{
 		{
 			args: []string{
-				"es", "-p:plain", "Hi", "-r", "Hello",
+				"-p:plain", "Hi", "-r", "Hello",
 				"--", "echo", "well Hi there!",
 			},
-			expect: func(t *testing.T, stdout, stderr string, exitCode int, log []string) {
-				require.Empty(t, stderr)
-				require.Zero(t, exitCode)
-				require.Empty(t, log)
-				require.Equal(t, "well Hello there!\n", stdout)
+			expect: func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string) {
+				assert.Empty(t, stderr)
+				assert.Zero(t, exitCode)
+				assert.Empty(t, log)
+				assert.Equal(t, "well Hello there!\n", stdout)
 			},
 		},
 		{
 			args: []string{
-				"es",
 				"--", "bash", "-c", "exit 5",
 			},
-			expect: func(t *testing.T, stdout, stderr string, exitCode int, log []string) {
-				require.Equal(t, "\ncommand exited with code 5\n", stderr)
-				require.Equal(t, 5, exitCode)
-				require.Empty(t, log)
-				require.Empty(t, stdout)
+			expect: func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string) {
+				assert.Equal(t, "\ncommand exited with code 5\n", stderr)
+				assert.Equal(t, 5, exitCode)
+				assert.Empty(t, log)
+				assert.Empty(t, stdout)
 			},
 		},
 		{
 			args: []string{
-				"es",
 				"-p:regex", "(Hi|Bye)", "-r", "Greetings",
 				"-p:plain", "welcome to", "-r", "you have arrived at",
 				"--", "cat", "-",
 			},
-			stdin: "Hi, welcome to Chili's. Bye.",
-			expect: func(t *testing.T, stdout, stderr string, exitCode int, log []string) {
-				require.Empty(t, stderr)
-				require.Zero(t, exitCode)
-				require.Empty(t, log)
-				require.Equal(t, "Greetings, you have arrived at Chili's. Greetings.", stdout)
+			stdin: strings.NewReader("Hi, welcome to Chili's. Bye."),
+			expect: func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string) {
+				assert.Empty(t, stderr)
+				assert.Zero(t, exitCode)
+				assert.Empty(t, log)
+				assert.Equal(t, "Greetings, you have arrived at Chili's. Greetings.", stdout)
 			},
 		},
 		{
 			args: []string{
-				"es",
+				"-p:regex", "(Hi|Bye)", "-r", "<greeting-*>",
+				"-p:plain", "welcome to", "-r", "you have arrived at",
+				"--", "bash", "-c", `
+					IFS=
+					read -r line
+					echo "$line"
+					read -r line
+					echo "$line"
+					read -r line
+					echo "$line"
+				`,
+			},
+			stdin:   &steppedReader{steps: []string{"Hi, welcome to Chili's.\n", "Bye.\n", "Another."}},
+			withLog: true,
+			expect: func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string) {
+				assert.Empty(t, stderr)
+				assert.Zero(t, exitCode)
+				assert.Equal(t, "<greeting-0>, you have arrived at Chili's.\n<greeting-2>.\nAnother.\n", stdout)
+
+				assert.Equal(t, map[string]string{
+					"0": "Hi",
+					"1": "welcome to",
+					"2": "Bye",
+				}, log)
+			},
+		},
+		{
+			args: []string{
 				"--", "echo", "-n", "Testing", "123",
 			},
-			expect: func(t *testing.T, stdout, stderr string, exitCode int, log []string) {
-				require.Empty(t, stderr)
-				require.Zero(t, exitCode)
-				require.Empty(t, log)
-				require.Equal(t, "Testing 123", stdout)
+			expect: func(t *testing.T, stdout, stderr string, exitCode int, log map[string]string) {
+				assert.Empty(t, stderr)
+				assert.Zero(t, exitCode)
+				assert.Empty(t, log)
+				assert.Equal(t, "Testing 123", stdout)
 			},
 		},
 	}
@@ -173,7 +198,8 @@ func Test_main(t *testing.T) {
 			args := tc.args
 			var logPath string
 			if tc.withLog {
-				logPath, err := ioutil.TempDir("", "execsanitize")
+				var err error
+				logPath, err = ioutil.TempDir("", "execsanitize")
 				require.NoError(t, err)
 				t.Cleanup(func() {
 					_ = os.RemoveAll(logPath)
@@ -182,17 +208,12 @@ func Test_main(t *testing.T) {
 				args = append([]string{"-log", logPath}, args...)
 			}
 
-			var (
-				stdin          io.Reader
-				stdout, stderr bytes.Buffer
-			)
-			if tc.stdin != "" {
-				stdin = strings.NewReader(tc.stdin)
-			}
-			exitCode := run(stdin, &stdout, &stderr, args)
+			var stdout, stderr bytes.Buffer
+			exitCode := run(tc.stdin, &stdout, &stderr, append([]string{"/opt/execsanitize"}, args...))
 
-			var log []string
+			var log map[string]string
 			if logPath != "" {
+				log = make(map[string]string)
 				err := filepath.Walk(logPath, func(path string, info os.FileInfo, err error) error {
 					require.NoError(t, err)
 					if info.IsDir() {
@@ -201,7 +222,7 @@ func Test_main(t *testing.T) {
 
 					content, err := ioutil.ReadFile(path)
 					require.NoError(t, err)
-					log = append(log, string(content))
+					log[info.Name()] = string(content)
 					return nil
 				})
 				require.NoError(t, err)
@@ -209,4 +230,23 @@ func Test_main(t *testing.T) {
 			tc.expect(t, stdout.String(), stderr.String(), exitCode, log)
 		})
 	}
+}
+
+type steppedReader struct {
+	steps []string
+	step  int
+}
+
+func (r *steppedReader) Read(p []byte) (n int, err error) {
+	if r.step >= len(r.steps) {
+		return 0, io.ErrUnexpectedEOF
+	}
+
+	s := r.steps[r.step]
+	r.step++
+	n = copy(p, []byte(s))
+	if r.step == len(r.steps) {
+		err = io.EOF
+	}
+	return
 }
