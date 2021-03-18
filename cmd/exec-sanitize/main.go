@@ -17,16 +17,9 @@ import (
 	"github.com/kamaln7/exec-sanitize/pkg/execsanitize"
 )
 
-func main() {
-	os.Exit(run(os.Stdin, os.Stdout, os.Stderr, os.Args))
-}
+var errPrintUsage = fmt.Errorf("u")
 
-func run(stdin io.Reader, stdout, stderr io.Writer, args []string) int {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if len(args) < 2 {
-		fmt.Fprintf(stderr, `usage: exec-sanitize <patterns and replacements> -- <command> [args...]
+const usageText = `usage: exec-sanitize <patterns and replacements> -- <command> [args...]
 
 each pattern must be directly followed with replacement. a replacement value of "@discard" deletes the line entirely.
 
@@ -38,12 +31,28 @@ each pattern must be directly followed with replacement. a replacement value of 
 		plaintext pattern to sanitize.
 	-r value
 		what to replace matched substrings with.
-`)
+`
+
+func main() {
+	os.Exit(run(os.Stdin, os.Stdout, os.Stderr, os.Args))
+}
+
+func run(stdin io.Reader, stdout, stderr io.Writer, args []string) int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if len(args) < 2 {
+		fmt.Fprint(stderr, usageText)
 		return 1
 	}
 
 	parsedArgs, err := parseArgs(args[1:])
 	if err != nil {
+		if err == errPrintUsage {
+			fmt.Fprint(stderr, usageText)
+			return 0
+		}
+
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
@@ -120,6 +129,9 @@ func parseArgs(args []string) (*parsedArgs, error) {
 			i++
 			break
 		}
+		if arg == "--help" {
+			return nil, errPrintUsage
+		}
 
 		if i+1 >= len(args) {
 			return nil, fmt.Errorf("unbalanced number of args")
@@ -184,7 +196,7 @@ func (a *parsedArgs) Rules() (map[*regexp.Regexp]execsanitize.ReplacerFunc, erro
 
 	for pattern, replacement := range a.rules {
 		replacement := replacement
-		
+
 		rgxp, err := regexp.Compile(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("parsing pattern %s: %w", pattern, err)
