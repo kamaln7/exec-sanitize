@@ -14,7 +14,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/kamaln7/exec-sanitize/pkg/execsanitize"
+	"github.com/kamaln7/exec-sanitize/v2/pkg/execsanitize"
 )
 
 var errPrintUsage = fmt.Errorf("u")
