@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -26,7 +27,8 @@ func Test_parseArgs(t *testing.T) {
 		{
 			args: []string{"--", "true"},
 			wantParsed: &parsedArgs{
-				cmd: "true",
+				cmd:     "true",
+				cmdArgs: []string{},
 			},
 		},
 		{
@@ -100,7 +102,7 @@ func Test_parseArgs(t *testing.T) {
 	}
 
 	for _, tc := range tcs {
-		t.Run("", func(t *testing.T) {
+		t.Run(fmt.Sprint(tc.args), func(t *testing.T) {
 			parsed, err := parseArgs(tc.args)
 			if tc.wantErr != "" {
 				require.Equal(t, tc.wantErr, err.Error())
@@ -189,7 +191,7 @@ func Test_main(t *testing.T) {
 		},
 		{
 			args: []string{
-				"-p:regex", "(Hi|Bye)", "-r", "@discard",
+				"-p:regex", "(Hi|Bye)", "-r:discard",
 				"--", "bash", "-c", `
 					for i in $(seq 1 3); do
 						IFS=$'\n' read -r line

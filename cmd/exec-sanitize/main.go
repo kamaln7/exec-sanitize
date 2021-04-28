@@ -121,42 +121,51 @@ type parsedRule struct {
 func parseArgs(args []string) (*parsedArgs, error) {
 	parsed := &parsedArgs{}
 
-	var (
-		i    int
-		rule string
-	)
-	for ; i < len(args); i += 2 {
-		arg := args[i]
+	args = append([]string{}, args...)
+	var rule string
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
+
+		// end of args
 		if arg == "--" {
-			i++
 			break
 		}
-		if arg == "--help" {
-			return nil, errPrintUsage
+
+		// validation rules
+		if arg == "-r" || strings.HasPrefix(arg, "-r:") && rule == "" {
+			return nil, fmt.Errorf("replacement must be directly preceeded by a pattern")
 		}
 
-		if i+1 >= len(args) {
+		if strings.HasPrefix(arg, "-p:") && rule != "" {
+			return nil, fmt.Errorf("pattern must be followed with a replacement")
+		}
+
+		// args that don't take values
+		switch arg {
+		case "--help":
+			return nil, errPrintUsage
+		case "-r:discard":
+			parsed.rules = append(parsed.rules, parsedRule{pattern: rule, replacement: execsanitize.DiscardToken})
+			rule = ""
+			continue
+		}
+
+		// args that take values
+		if len(args) == 0 {
 			return nil, fmt.Errorf("unbalanced number of args")
 		}
 
-		value := args[i+1]
+		value := args[0]
+		args = args[1:]
 		switch arg {
 		case "-log":
 			parsed.logPath = value
 		case "-p:regex":
-			if rule != "" {
-				return nil, fmt.Errorf("pattern must be followed with a replacement")
-			}
 			rule = value
 		case "-p:plain":
-			if rule != "" {
-				return nil, fmt.Errorf("pattern must be followed with a replacement")
-			}
 			rule = regexp.QuoteMeta(value)
 		case "-r":
-			if rule == "" {
-				return nil, fmt.Errorf("replacement must be directly preceeded by a pattern")
-			}
 			parsed.rules = append(parsed.rules, parsedRule{pattern: rule, replacement: value})
 			rule = ""
 		default:
@@ -164,11 +173,9 @@ func parseArgs(args []string) (*parsedArgs, error) {
 		}
 	}
 
-	if i < len(args) {
-		parsed.cmd = args[i]
-	}
-	if i+1 < len(args) {
-		parsed.cmdArgs = args[i+1:]
+	if len(args) > 0 {
+		parsed.cmd = args[0]
+		parsed.cmdArgs = args[1:]
 	}
 
 	return parsed, nil

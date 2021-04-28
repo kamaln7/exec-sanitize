@@ -7,7 +7,7 @@ import (
 
 const (
 	// DiscardToken is a special replacement string that discards the write operation completely on match
-	DiscardToken = "@discard"
+	DiscardToken = "\x03\x03"
 )
 
 // ReplacerFunc is a function that accept a match and returns its replacement
@@ -26,27 +26,19 @@ type Rule struct {
 // Sanitize sanitizes a string using the Sanitizers rules
 func (s *Sanitizer) Sanitize(in string) string {
 	var discard bool
-	wrapReplacer := func(r ReplacerFunc) ReplacerFunc {
-		return func(in string) string {
-			s := r(in)
+	for _, rule := range s.Rules {
+		in = rule.Pattern.ReplaceAllStringFunc(in, func(in string) (out string) {
+			s := rule.Replacer(in)
 			if s == DiscardToken {
 				discard = true
 			}
 
 			return s
-		}
-	}
+		})
 
-	for _, rule := range s.Rules {
 		if discard {
-			break
+			return ""
 		}
-
-		in = rule.Pattern.ReplaceAllStringFunc(in, wrapReplacer(rule.Replacer))
-	}
-
-	if discard {
-		return ""
 	}
 
 	return in
